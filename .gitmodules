@@ -1,0 +1,6 @@
+[submodule "online-exam-system-backend"]
+    path = online-exam-system-backend
+    url = https://github.com/TechCollabOrg/online-exam-system-backend.git
+[submodule "online-exam-system-frontend"]
+    path = online-exam-system-frontend
+    url = https://github.com/TechCollabOrg/online-exam-system-frontend.git
