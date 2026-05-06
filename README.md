@@ -1,153 +1,451 @@
-# 在线考试系统（前后端 + 学生端 Windows 打包说明）
+# 在线考试系统
 
-本目录包含两个子项目，与《在线考试系统需求分析文档》（2026-05-03）对应：
-
-| 目录 | 技术栈 | 在需求文档中的定位 |
-|------|--------|-------------------|
-| `online-exam-system-backend` | Spring Boot 2 + MyBatis-Plus + Redis + JWT | 认证、题库、考试、阅卷、证书、WebSocket 等服务端能力 |
-| `online-exam-system-frontend` | Vue 2 + Element UI + Vuex | 学生/教师/管理员共用的 Web 界面；可经 Electron 打包为学生端 `.exe` |
-
-文档中部分能力（如内核级快捷键屏蔽、SQLite 离线卷、人脸与第三方 AI 的完整降级策略）需要持续迭代；当前仓库在开源项目基础上已做：**Electron 学生端壳、打包用环境变量、验证码/WebSocket 在 `file://` 下可用、关键入口中文注释**。
-
-**推送到 GitHub 前**：勿将真实数据库口令、JWT 密钥、云厂商 AccessKey、Coze/Dify/大模型 API Key 等写入仓库。后端已改为在 `application-*.yml` 中用 `${环境变量}` 占位，模板见 `online-exam-system-backend/env.example`；前端敏感项见 `online-exam-system-frontend/.env.example` 与 `.env.electron.example`。若历史上曾把真实密钥提交过，请在对应平台**立即轮换/作废**旧密钥。
+> 一个支持学生答题、教师出卷阅卷、管理员统筹的全功能在线考试平台。
+> 学生端可打包为 Windows `.exe`，在没有浏览器的机房也能运行。
 
 ---
 
-## 一、环境准备
+## 目录
 
-1. **JDK 8**、**Maven 3.x**  
-2. **MySQL**（库名与 `application-dev.yml` 中一致，默认 `db_exam`）  
-3. **Redis**（与 `application-dev.yml` 中 host/port 一致）  
-4. **Node.js**（建议 16 LTS 或以上，用于前端）  
-5. 按需启动 **MinIO**（后端 `application-dev.yml` 已配置本地 endpoint 时）
-
-数据库脚本：见后端项目中的 `lib` 文件夹（README 中亦有说明）。
-
-### Windows 常见启动阻塞（先按这里排查）
-
-1) **终端提示找不到 `mvn`**  
-说明你本机未安装 Maven，或 Maven 未加入环境变量 PATH。请安装 Maven 3.x，并确保命令行能执行：
-
-- `mvn -version`
-
-2) **`java -version` 直接闪退/无输出**  
-你机器上可能存在多个 Java（例如 `Oracle\Java\javapath` 的“快捷入口”优先级更高），导致 `java` 指向了异常的路径。处理方式（任选其一即可）：
-
-- **推荐**：安装 **JDK 8 或 JDK 11**，设置 `JAVA_HOME` 为该 JDK 目录，并把 `%JAVA_HOME%\bin` 放到 PATH 最前面，然后重新打开终端验证 `java -version`。  
-- 或者：在 PATH 里把 `C:\Program Files\Common Files\Oracle\Java\javapath` 这类条目移动到后面/移除，再验证 `java -version`。
-
-> 本仓库后端以 Java 8 编译目标（`pom.xml` 里为 1.8）；用 JDK 8/11 最省心。
-
-3) **Node 版本过新导致前端依赖“引擎不支持”警告**  
-如果你当前 Node 是 22+，`npm install` 可能会出现 `EBADENGINE` 警告（不一定会失败，但可能带来奇怪问题）。建议切到 **Node 16 LTS** 再运行前端（例如使用 nvm-windows 管理多版本）。
-
-4) **你还没安装 MySQL / Redis**（最常见卡点）  
-后端默认需要：
-- **MySQL**：`127.0.0.1:3306`，库名 `db_exam`，账号 `root`，密码 `root`
-- **Redis**：`127.0.0.1:6379`，无密码（默认）
-
-你可以走两条路线：
-- **路线 A（新手推荐，图形化安装）**：安装 MySQL + 安装 Memurai（Redis 兼容服务，Windows 上更省心）  
-- **路线 B（进阶）**：装 WSL2 / Docker，用 Linux 版 Redis/MySQL（更“正统”，但步骤更多）
+- [这个系统能做什么？](#这个系统能做什么)
+- [三种角色功能一览](#三种角色功能一览)
+- [快速体验（第一次运行）](#快速体验第一次运行)
+- [环境准备详解](#环境准备详解)
+- [启动项目（开发模式）](#启动项目开发模式)
+- [打包为学生端 .exe](#打包为学生端-exe)
+- [常见启动问题排查](#常见启动问题排查)
+- [开发者参考](#开发者参考)
+- [待完善功能与已知差距](#待完善功能与已知差距)
+- [安全注意事项](#安全注意事项)
 
 ---
 
-## 二、启动项目（开发）
+## 这个系统能做什么？
 
-### 1. 启动后端
+这是一套**在线考试平台**，主要用于学校或培训机构：
+
+- **学生**：在网页或桌面程序里参加考试、平时刷题、查看成绩和错题
+- **教师**：创建题库、出卷、发布考试、批阅主观题、查看班级统计
+- **管理员**：管理用户账号、班级分组、系统公告、操作日志
+
+系统支持**单选题、多选题、判断题、简答题**四种题型，客观题自动批改，主观题由教师人工打分。
+
+---
+
+## 三种角色功能一览
+
+### 学生能做什么
+
+| 功能 | 说明 |
+|------|------|
+| 试卷中心 | 查看自己班级发布的所有考试，点击参加 |
+| 参加考试 | 在线答题，全屏模式防止切屏作弊，切屏次数会被记录 |
+| 刷题中心 | 练习题库中的题目，随时可做不计入成绩 |
+| 考试记录 | 查看历次考试的分数和答题详情 |
+| 刷题记录 | 查看自己的刷题历史 |
+| 错题本 | 自动收集做错的题目，可重新练习 |
+| 讨论区 | 与同学和老师讨论题目疑问 |
+| 个人中心 | 修改头像、昵称、密码 |
+| 我的证书 | 查看通过考试获得的电子证书 |
+
+### 教师能做什么
+
+| 功能 | 说明 |
+|------|------|
+| 题库管理 | 新建、编辑、删除题目，支持四种题型 |
+| 题目分类 | 给题目打标签分类，方便组卷 |
+| 试题仓库 | 管理题目集合，按类别组织 |
+| 考试管理 | 创建考试（设置时间、题目、分数、通过分线） |
+| 阅卷评分 | 批改学生的简答题，给出分数和批注 |
+| 班级管理 | 查看班级学生名单，分配考试 |
+| 成绩统计 | 查看班级整体成绩分布和分析 |
+| 讨论管理 | 管理学生的讨论帖，回复问题 |
+| 公告通知 | 发布班级通知 |
+
+### 管理员能做什么
+
+| 功能 | 说明 |
+|------|------|
+| 用户管理 | 创建/停用账号，分配学生或教师角色 |
+| 班级管理 | 创建班级，批量导入学生 |
+| 日志查看 | 查看所有操作记录 |
+| 考试管理 | 对所有考试有完整管理权限 |
+| 统计报表 | 全站数据概览 |
+| 证书管理 | 配置和颁发电子证书 |
+
+---
+
+## 快速体验（第一次运行）
+
+如果你只是想快速看到系统跑起来，按下面的步骤操作：
+
+### 第一步：安装必要软件
+
+在你的电脑上依次安装：
+
+1. **JDK 8**（Java 运行环境）：[下载地址](https://www.oracle.com/java/technologies/downloads/#java8)
+2. **Maven**（Java 构建工具）：[下载地址](https://maven.apache.org/download.cgi) — 解压后把 `bin` 目录加入系统 PATH
+3. **MySQL**（数据库）：[下载地址](https://dev.mysql.com/downloads/mysql/)，安装时设置 root 密码为 `root`
+4. **Redis**（缓存）：Windows 推荐安装 [Memurai](https://www.memurai.com/)（免费版完全够用）
+5. **Node.js 16 LTS**（前端运行环境）：[下载地址](https://nodejs.org/en/download/releases)
+
+### 第二步：初始化数据库
+
+打开 MySQL，创建数据库并导入初始数据：
+
+```sql
+CREATE DATABASE db_exam DEFAULT CHARACTER SET utf8mb4;
+```
+
+然后在 MySQL 客户端（如 Navicat 或命令行）中运行 `online-exam-system-backend/lib/` 目录下的 SQL 文件。
+
+### 第三步：启动后端
 
 ```bash
 cd online-exam-system-backend
-# 一般不用配环境变量，直接启动即可（默认值在 application-dev.yml）。
-# 若要改数据库密码等：Windows 里搜「环境变量」新建用户变量，变量名见 online-exam-system-backend/env.example 里的说明。
 mvn spring-boot:run
 ```
 
-`env.example` 只是**人看的说明书**（变量名叫什么），不是程序自动读取的配置文件。覆盖默认值时在系统或 IDE 里设置同名环境变量即可（例如 `MYSQL_PASSWORD`、`JWT_SECRET`、`EXAM_AES_KEY`）。**`EXAM_AES_KEY` / `EXAM_AES_IV` 须与前端 `VUE_APP_CRYPTO_KEY` / `VUE_APP_CRYPTO_IV` 一致（各 16 字符）。** 若数据库用户是在本仓库改为环境变量**之前**注册的，请在你本地保存的「旧 AES 密钥」上对齐三端环境变量，否则登录时前端加密与后端解密不一致；迁移完成后建议改为新的随机 16 字符并通知用户必要时重设密码。
+启动成功后，后端运行在 `http://127.0.0.1:8080`。
 
-默认 API 端口：**8080**。接口前缀一般为 **`/api`**。Knife4j 文档地址以控制台或配置为准（常见为 `http://127.0.0.1:8080/doc.html`）。
+### 第四步：启动前端
 
-### 2. 启动前端（浏览器）
+新开一个终端窗口：
 
 ```bash
 cd online-exam-system-frontend
-# 可选：复制 .env.example 为 .env.development.local 覆盖本地 API/密钥（.local 文件已被 .gitignore 忽略）
 npm install
 npm run dev
 ```
 
-默认前端端口：**9527**，已通过 `vue.config.js` 将 **`/api`** 代理到 `http://127.0.0.1:8080`。
+启动成功后，浏览器打开 `http://localhost:9527`，即可看到登录页面。
 
-浏览器访问控制台打印的本地地址，使用管理员在「用户管理」中创建的账号登录（学生 / 教师 / 管理员三种角色）。
+> **默认测试账号**（由数据库初始脚本创建）：
+>
+> | 角色 | 用户名 | 密码 |
+> |------|--------|------|
+> | 管理员 | `admin` | `123456` |
+> | 教师 | `teacher` | `123456` |
+> | 学生 | `student` | `123456` |
+>
+> 正式上线前请及时修改以上密码。
 
-### 3. 以 Electron 窗口调试学生端（可选）
+---
 
-需已安装依赖；会同时启动 Vue 开发服务与 Electron：
+## 环境准备详解
+
+### 所需软件版本
+
+| 软件 | 版本要求 | 说明 |
+|------|---------|------|
+| JDK | 8 或 11 | 后端以 Java 8 为目标编译，JDK 11 也兼容 |
+| Maven | 3.x | 后端构建工具 |
+| MySQL | 5.7+ | 数据库，库名 `db_exam` |
+| Redis | 任意稳定版 | 缓存与会话，Windows 推荐 Memurai |
+| Node.js | 16 LTS | 前端开发环境；**不推荐 18+**，可能有依赖兼容问题 |
+| MinIO | 可选 | 文件（图片、附件）存储，不配置则禁用文件上传 |
+
+### 默认连接配置（`application-dev.yml`）
+
+| 服务 | 地址 | 账号 | 密码 |
+|------|------|------|------|
+| MySQL | `127.0.0.1:3306` | `root` | `root` |
+| Redis | `127.0.0.1:6379` | — | 无密码 |
+| 后端 API | `http://127.0.0.1:8080` | — | — |
+| 前端页面 | `http://localhost:9527` | — | — |
+| Knife4j 接口文档 | `http://127.0.0.1:8080/doc.html` | — | — |
+
+如需修改数据库密码等，在系统环境变量中设置对应变量名（变量名见 `online-exam-system-backend/env.example`）即可覆盖默认值，**无需修改代码**。
+
+---
+
+## 启动项目（开发模式）
+
+### 启动后端
+
+```bash
+cd online-exam-system-backend
+mvn spring-boot:run
+```
+
+- 默认端口 **8080**，接口前缀 `/api`
+- 接口文档（Swagger/Knife4j）：`http://127.0.0.1:8080/doc.html`
+
+### 启动前端（浏览器访问）
+
+```bash
+cd online-exam-system-frontend
+npm install      # 首次运行需要，之后可跳过
+npm run dev
+```
+
+- 默认端口 **9527**
+- `/api` 请求自动代理到后端 `8080`，无需手动配置跨域
+
+### 启动学生端（Electron 桌面调试，可选）
 
 ```bash
 cd online-exam-system-frontend
 npm run electron:dev
 ```
 
-考试全屏演示（kiosk，浏览器级）：关闭上述进程后，在项目目录执行：
+开启全屏 kiosk 模式（模拟机房环境）：
 
 ```bash
 npx cross-env EXAM_KIOSK=1 npm run electron:dev
 ```
 
-或在打包后的快捷方式上增加参数 `--exam-kiosk`（见 `electron/main.js` 注释）。
-
 ---
 
-## 三、打包为 Windows `.exe`（学生端）
+## 打包为学生端 .exe
 
-原理：使用 **Electron** 加载已构建的 Vue 静态资源（`dist`），API 与 WebSocket 地址在 **`.env.electron`**（构建时注入；仓库内提供 **`.env.electron.example`**，本地可复制为 `.env.electron` 再改，且 `.env.electron` 已列入 `.gitignore` 避免误提交），生成文件在 **`online-exam-system-frontend/release/`**。
+用于在机房等无浏览器环境给学生使用，打包后得到一个可直接运行的 Windows 程序。
 
-1. 确认学生机能访问后端。首次打包请执行：`copy .env.electron.example .env.electron`（macOS/Linux 用 `cp`），再编辑 **`online-exam-system-frontend/.env.electron`**，将 `VUE_APP_BASE_API`、`VUE_APP_WS_URL` 改为实际 **http(s)/ws(s)** 地址，并保证 **`VUE_APP_CRYPTO_KEY` / `VUE_APP_CRYPTO_IV` 与后端 `EXAM_AES_KEY` / `EXAM_AES_IV` 一致**。  
-2. 执行：
+### 第一步：配置打包环境变量
 
 ```bash
 cd online-exam-system-frontend
-npm install
+copy .env.electron.example .env.electron   # Windows
+# macOS/Linux: cp .env.electron.example .env.electron
+```
+
+编辑 `.env.electron`，将以下字段改为你的实际地址：
+
+```env
+VUE_APP_BASE_API=http://你的服务器IP:8080/api     # 后端 API 地址
+VUE_APP_WS_URL=ws://你的服务器IP:8080/websocket   # WebSocket 地址
+VUE_APP_CRYPTO_KEY=你的16字符密钥                  # 需与后端 EXAM_AES_KEY 一致
+VUE_APP_CRYPTO_IV=你的16字符向量                   # 需与后端 EXAM_AES_IV 一致
+```
+
+> **重要**：加密密钥（CRYPTO_KEY/IV）必须与后端环境变量 `EXAM_AES_KEY`/`EXAM_AES_IV` **完全一致**，否则登录时加解密会失败。
+
+### 第二步：执行打包
+
+```bash
 npm run electron:dist
 ```
 
-产物说明：
+打包完成后，产物在 `online-exam-system-frontend/release/` 目录：
 
-- **`portable` 目标**：绿色便携 **`.exe`**，适合拷贝到机房学生机。  
-- **`nsis` 目标**：安装向导 **`.exe`**，适合需要安装目录与快捷方式的场景。
+| 文件类型 | 适用场景 |
+|---------|---------|
+| `*-portable.exe` | 绿色版，直接复制到学生机运行，无需安装 |
+| `*-setup.exe` | 安装包，有安装向导和桌面快捷方式 |
 
-**注意**：学生机仍需能访问你配置的 API 与 WebSocket 地址；`.exe` 不包含 Java 后端，后端需单独部署或在局域网另一台机器运行。
-
----
-
-## 四、建议的「读代码顺序」（快速建立全局观）
-
-### 后端（`online-exam-system-backend`）
-
-1. `ExamApplication.java` — 启动注解与文档索引注释。  
-2. `config/SecurityConfig.java`、`filter/VerifyTokenFilter.java` — 登录后 JWT 如何进 SecurityContext。  
-3. `controller/AuthController.java` + `service/impl/AuthServiceImpl.java` — 登录注册与令牌。  
-4. `service/impl/ExamServiceImpl.java` — 考试创建、开考、交卷、客观题判分等主流程。  
-5. `service/impl/ManualScoreServiceImpl.java`、`AutoScoringServiceImpl.java` — 主观题与客观题评分。  
-6. `websocket/WebsocketHandler.java` — 监考与推送。  
-7. `mapper` 与 `model/entity` — 与表结构一一对应，对照需求第 6 章数据实体。
-
-### 前端（`online-exam-system-frontend`）
-
-1. `src/main.js` — 入口与路由守卫、WebSocket 初始化。  
-2. `src/permission.js` — 进度条与标签页逻辑。  
-3. `src/router/index.js` — 页面与角色。  
-4. `src/utils/request.js` — axios 拦截器与 Token 刷新。  
-5. `src/store/modules/user.js` — 登录态与「记住我」。  
-6. `src/api` — 按业务模块阅读，与后端 Controller 对应。  
-7. `src/views` — 具体页面；学生考试相关可搜「考试」「切屏」等关键词。  
-8. `electron/main.js` — 桌面壳与全屏参数。
+> **注意**：`.exe` 不包含 Java 后端。后端需要在另一台服务器（或局域网机器）上单独运行，学生机通过网络连接。
 
 ---
 
-## 五、需求文档与当前实现的差距（便于验收与二期规划）
+## 常见启动问题排查
 
-已在代码注释中标注的条目包括但不限于：Electron 全屏为**应用级 kiosk**，**不等同**于文档 STU-06 中内核级屏蔽 Alt+Tab / 禁止任务管理器；离线答题 STU-09 若需 SQLite 与冲突合并，需单独数据层设计；AI 辅助评分需对照文档 2.5.1 统一超时与「待人工批阅」降级字段。
+### 问题 1：终端提示找不到 `mvn`
 
-若课程作业仅需「可运行 + 学生端 exe + 说明文档」，按本文第二、三节操作即可；若需完整对标需求矩阵，请按第五节逐项立项开发。
+Maven 未安装或未加入 PATH。安装 Maven 后，打开新终端验证：
+
+```bash
+mvn -version
+```
+
+能看到版本号说明配置正确。
+
+### 问题 2：`java -version` 闪退或输出异常
+
+电脑上可能存在多个 Java 版本互相冲突。解决方法：
+
+1. 安装 **JDK 8 或 JDK 11**
+2. 设置系统环境变量 `JAVA_HOME` 指向该 JDK 目录
+3. 将 `%JAVA_HOME%\bin` 移到 PATH **最前面**
+4. 重新打开终端，验证 `java -version`
+
+### 问题 3：Maven 下载依赖时报 SSL 错误
+
+通常是网络问题或 Maven 连接到了错误的 Java。配置阿里云镜像可解决：
+
+编辑（或新建）`C:\Users\你的用户名\.m2\settings.xml`：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <mirrors>
+    <mirror>
+      <id>aliyun-public</id>
+      <mirrorOf>*</mirrorOf>
+      <name>Aliyun Maven Mirror</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+    </mirror>
+  </mirrors>
+</settings>
+```
+
+配置后重新运行 `mvn -U spring-boot:run`。
+
+### 问题 4：后端启动后前端显示"连接失败"
+
+检查以下几点：
+
+- MySQL 和 Redis 是否已启动（在任务管理器或服务列表中确认）
+- 数据库 `db_exam` 是否已创建并导入初始 SQL
+- 后端控制台是否有红色报错信息（按报错内容排查）
+
+### 问题 5：Node.js 版本导致前端依赖安装失败
+
+如果你的 Node.js 是 18 或更高版本，建议使用 `nvm-windows` 切换到 **Node 16 LTS**：
+
+```bash
+nvm install 16
+nvm use 16
+npm install
+npm run dev
+```
+
+---
+
+## 开发者参考
+
+### 项目结构
+
+```
+online_examination_system/
+├── online-exam-system-backend/     # Spring Boot 后端
+│   ├── src/main/java/.../
+│   │   ├── config/                 # 安全、跨域、Redis、Swagger 配置
+│   │   ├── controller/             # REST API 控制器
+│   │   ├── service/impl/           # 业务逻辑实现
+│   │   ├── mapper/                 # MyBatis-Plus 数据访问层
+│   │   ├── model/                  # 实体类、VO、Form、DTO
+│   │   ├── filter/                 # JWT Token 验证过滤器
+│   │   └── websocket/              # WebSocket 监考推送
+│   ├── src/main/resources/
+│   │   ├── application.yml         # 主配置（指定激活 dev/prod）
+│   │   ├── application-dev.yml     # 开发环境配置（含数据库连接）
+│   │   └── application-prod.yml    # 生产环境配置（用环境变量占位）
+│   └── lib/                        # 数据库初始化 SQL 脚本
+│
+└── online-exam-system-frontend/    # Vue 2 前端
+    ├── src/
+    │   ├── api/                    # 与后端 Controller 一一对应的接口调用
+    │   ├── views/                  # 各功能页面
+    │   ├── router/index.js         # 路由与角色权限定义
+    │   ├── store/                  # Vuex 状态管理（登录态、用户信息）
+    │   └── utils/request.js        # axios 拦截器与 Token 刷新逻辑
+    ├── electron/main.js            # Electron 桌面壳入口
+    ├── .env.electron.example       # 打包 exe 的环境变量模板
+    └── .env.example                # 浏览器开发的环境变量模板
+```
+
+### 技术栈
+
+| 层次 | 技术 |
+|------|------|
+| 后端框架 | Spring Boot 2 |
+| ORM | MyBatis-Plus |
+| 认证 | Spring Security + JWT |
+| 缓存 | Redis |
+| 实时通信 | WebSocket（Spring） |
+| 数据库 | MySQL |
+| API 文档 | Knife4j（Swagger 增强版） |
+| 前端框架 | Vue 2 + Element UI |
+| 状态管理 | Vuex |
+| HTTP 客户端 | axios |
+| 桌面打包 | Electron |
+| 前端构建 | Vue CLI / webpack |
+
+### 推荐阅读顺序（快速理解全貌）
+
+#### 后端
+
+1. `ExamApplication.java` — 启动入口与全局注解
+2. `config/SecurityConfig.java` + `filter/VerifyTokenFilter.java` — JWT 认证流程
+3. `controller/AuthController.java` + `service/impl/AuthServiceImpl.java` — 登录注册逻辑
+4. `service/impl/ExamServiceImpl.java` — 考试核心流程（创建→开考→交卷→自动判分）
+5. `service/impl/ManualScoreServiceImpl.java` — 主观题人工评分
+6. `websocket/WebsocketHandler.java` — 实时监考与消息推送
+7. `mapper/` + `model/entity/` — 数据表结构，与数据库一一对应
+
+#### 前端
+
+1. `src/main.js` — 入口文件、路由守卫、WebSocket 初始化
+2. `src/router/index.js` — 全部路由与角色权限（meta.roles）
+3. `src/utils/request.js` — axios 拦截器与自动 Token 刷新
+4. `src/store/modules/user.js` — 登录状态与"记住我"逻辑
+5. `src/api/` — 按业务模块浏览，与后端 Controller 对应
+6. `src/views/exam/` — 考试相关页面（学生答题、教师管理、切屏检测等）
+7. `electron/main.js` — 桌面壳配置与全屏参数
+
+### API 接口模块列表
+
+| 模块 | 路径前缀 | 说明 |
+|------|---------|------|
+| 认证 | `/api/auth` | 登录、注册、刷新 Token |
+| 用户 | `/api/user` | 用户 CRUD、修改密码 |
+| 班级 | `/api/grade` | 班级管理、学生分配 |
+| 题目 | `/api/question` | 题目 CRUD、批量导入 |
+| 题库 | `/api/repo` | 题目仓库管理 |
+| 分类 | `/api/category` | 题目分类管理 |
+| 考试 | `/api/exam` | 考试全生命周期管理 |
+| 答卷 | `/api/answer` | 学生提交答案 |
+| 评分 | `/api/score` | 主观题打分 |
+| 记录 | `/api/record` | 考试记录查询 |
+| 练习 | `/api/exercise` | 刷题功能 |
+| 错题本 | `/api/userBook` | 错题收藏与重做 |
+| 讨论 | `/api/discussion` | 帖子与回复 |
+| 公告 | `/api/notice` | 系统通知 |
+| 统计 | `/api/stat` | 数据统计接口 |
+| 证书 | `/api/certificate` | 证书颁发与查询 |
+| 文件 | `/api/file` | 图片/附件上传 |
+| 日志 | `/api/log` | 操作日志查询 |
+
+完整接口文档启动后见：`http://127.0.0.1:8080/doc.html`
+
+---
+
+## 待完善功能与已知差距
+
+以下功能在设计文档中有规划，但当前版本尚未完整实现，后续迭代时可重点关注：
+
+### 防作弊（学生端安全）
+
+| 功能 | 当前状态 | 说明 |
+|------|---------|------|
+| 全屏锁定 | 已实现（应用级） | Electron kiosk 模式，但**不能**屏蔽 Alt+Tab、任务管理器等系统快捷键（内核级屏蔽需额外开发） |
+| 切屏检测 | 已实现 | 切屏次数记录并上报教师端 |
+| 离线答题 | 未实现 | 需要本地 SQLite 存储 + 网络恢复后同步冲突解决逻辑 |
+| 人脸识别身份核验 | 未实现 | 需接入第三方 AI 接口并设计降级策略 |
+
+### AI 辅助功能
+
+| 功能 | 当前状态 | 说明 |
+|------|---------|------|
+| AI 辅助评分 | 部分实现 | 超时降级逻辑、「待人工批阅」状态字段需与需求文档 2.5.1 完整对齐 |
+| 智能组卷 | 未实现 | 基于知识点和难度自动推荐题目组合 |
+| 学习建议生成 | 未实现 | 根据错题和成绩趋势给学生个性化建议 |
+
+### 其他待完善项
+
+- **生产部署**：`application-prod.yml` 已准备环境变量占位，但 Nginx 反向代理、HTTPS 证书、Docker 镜像等部署脚本尚未提供
+- **批量导题**：Excel 批量导入题目功能接口已有，但前端页面尚未完整
+- **证书模板**：证书样式自定义功能规划中
+
+> 如果课程作业只需「系统能跑起来 + 学生端 exe + 运行说明」，按本文"快速体验"和"打包 exe"两节操作即可满足要求。如需完整对标设计文档，请按上表逐项立项开发。
+
+---
+
+## 安全注意事项
+
+**推送到 GitHub 之前，必须确认以下事项：**
+
+- **不要**把真实数据库密码、JWT 密钥、AES 密钥、云厂商 AccessKey、AI 平台 API Key 等提交到仓库
+- 后端敏感配置已改为环境变量占位（`${变量名}`），说明见 `online-exam-system-backend/env.example`
+- 前端敏感配置模板见 `.env.example` 和 `.env.electron.example`；本地实际使用的 `.env.development.local` 和 `.env.electron` 已被 `.gitignore` 忽略
+- 如果过去曾经不小心把真实密钥提交过，请**立即在对应平台作废旧密钥并重新生成**
+
+**AES 加密密钥对齐（重要）：**
+
+前端环境变量 `VUE_APP_CRYPTO_KEY` / `VUE_APP_CRYPTO_IV` 必须与后端 `EXAM_AES_KEY` / `EXAM_AES_IV` 保持一致（各 16 个字符）。如果三端（浏览器开发版、Electron 打包版、Spring Boot 后端）的密钥不一致，登录时密码加密/解密会失败，表现为"用户名或密码错误"但实际账号密码是正确的。
+
+---
+
+*最后更新：2026-05-06*
