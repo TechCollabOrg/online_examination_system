@@ -33,6 +33,10 @@ class ParsedQuestion:
     # 模板无独立列：写入第 9 列「解析」文本中的附图链接
     answer_image_links: List[str] = None
     analysis_image_links: List[str] = None
+    # 与 Excel「材料组编号 / 共用材料题干 / 共用材料题干图片」一致：同组多行首行填父题材料，各小问独立题型与选项
+    stem_group_code: Optional[str] = None
+    shared_stem_content: Optional[str] = None
+    shared_stem_image_links: Optional[List[str]] = None
 
 
 _QUESTION_START_RE = re.compile(r"^\s*(\d{1,4})\s*[\.、．]\s*(.+?)\s*$")
@@ -219,6 +223,11 @@ def _collect_used_image_paths(questions: List[ParsedQuestion]) -> Set[Path]:
                 used.add(Path(s))
             except Exception:
                 continue
+        for s in (q.shared_stem_image_links or []):
+            try:
+                used.add(Path(s))
+            except Exception:
+                continue
         for opt_list in (q.option_image_links or [[] for _ in range(6)]):
             for s in opt_list:
                 try:
@@ -289,6 +298,8 @@ def upload_used_images_to_minio(
         q.option_image_links = [
             [repl_one(x) for x in lst] for lst in (q.option_image_links or [[] for _ in range(6)])
         ]
+        if q.shared_stem_image_links:
+            q.shared_stem_image_links = [repl_one(x) for x in q.shared_stem_image_links]
 
 
 def _which(cmd: str) -> Optional[str]:
@@ -392,122 +403,272 @@ def _parse_correct_letters(s: str) -> List[str]:
     return []
 
 
+def _compose_shared_stem_for_group(
+    current_big: Optional[Tuple[str, str]], pending_big_lines: List[str]
+) -> Tuple[str, List[str]]:
+    """大题标题 +「题目」与首个【问题】之间的段落 → 导入模板中的共用材料题干（含图标记剥离）。"""
+    parts: List[str] = []
+    if current_big:
+        big_no, big_title = current_big
+        if big_title:
+            parts.append(f"{big_no}：{big_title}")
+        else:
+            parts.append(big_no)
+    if pending_big_lines:
+        parts.append("\n".join(pending_big_lines))
+    raw = "\n\n".join(parts).strip()
+    return _strip_img_markers(raw)
+
+
+def _merge_saqs_into_multi_slot(
+    subs: List[ParsedQuestion], material_plain: str, material_imgs: List[str]
+) -> ParsedQuestion:
+    """
+    同一「题目/试题」下多道【问题】且均为简答：合并为一道简答题。
+    各小问题干拼接在 content；各空参考答案写入选项列 A～F（至多 6 空，超出部分写入解析说明）。
+    不使用材料组列，导入后即为单题多空。
+    """
+    stems: List[str] = []
+    refs: List[str] = []
+    ana_parts: List[str] = []
+    stem_imgs: List[str] = list(material_imgs or [])
+    for s in subs:
+        stems.append(s.title.strip())
+        ref = (s.answer_text or "").strip()
+        if not ref:
+            ref = (s.analysis or "").strip()
+        if not ref:
+            ref = "（参考答案待补充）"
+        refs.append(ref)
+        if s.analysis and s.analysis.strip() and s.analysis.strip() != ref:
+            ana_parts.append(s.analysis.strip())
+        stem_imgs.extend(s.stem_image_links or [])
+
+    title_parts: List[str] = []
+    if material_plain.strip():
+        title_parts.append(material_plain.strip())
+    title_parts.append("\n\n".join(stems))
+    full_title, title_img_extra = _strip_img_markers("\n\n".join(title_parts))
+    stem_imgs = list(material_imgs or []) + title_img_extra + stem_imgs
+
+    overflow = refs[6:] if len(refs) > 6 else []
+    opts6 = (refs[:6] + [""] * 6)[:6]
+    analysis = "\n\n".join([x for x in ana_parts if x]).strip() or None
+    if overflow:
+        extra = "【第7问及以后参考答案（模板仅六列选项，请在前端拆分为多题或合并）】\n" + "\n".join(
+            f"({i + 7}){t}" for i, t in enumerate(overflow)
+        )
+        analysis = (analysis + "\n\n" if analysis else "") + extra
+
+    return ParsedQuestion(
+        qtype=4,
+        title=full_title,
+        options=opts6,
+        correct_letters=[],
+        answer_text=None,
+        analysis=analysis,
+        stem_image_links=stem_imgs,
+        option_image_links=[[] for _ in range(6)],
+        answer_image_links=[],
+        analysis_image_links=[],
+        stem_group_code=None,
+        shared_stem_content=None,
+        shared_stem_image_links=None,
+    )
+
+
+def _parse_question_from_parts(initial_title: str, body_lines: List[str]) -> ParsedQuestion:
+    """
+    从「题干首行 + 后续正文行」解析单题（与 `_split_into_question_blocks` 下单题逻辑一致）：
+    支持单选/多选/判断/简答、独立 A～F 选项与答案行。
+    """
+    title = initial_title.strip()
+    options: List[str] = []
+    correct_letters: List[str] = []
+    answer_text: Optional[str] = None
+    analysis_lines: List[str] = []
+    stem_imgs: List[str] = []
+    option_imgs: List[List[str]] = [[] for _ in range(6)]
+    answer_imgs: List[str] = []
+    analysis_imgs: List[str] = []
+
+    in_analysis = False
+    after_answer = False
+    current_option_idx: Optional[int] = None
+
+    for line in body_lines:
+        if "[[IMG:" in line:
+            imgs = re.findall(r"\[\[IMG:(.+?)\]\]", line)
+            line_wo = re.sub(r"\s*\[\[IMG:.+?\]\]\s*", " ", line).strip()
+            if in_analysis:
+                analysis_imgs.extend(imgs)
+            elif after_answer:
+                answer_imgs.extend(imgs)
+            elif current_option_idx is not None:
+                option_imgs[current_option_idx].extend(imgs)
+            else:
+                stem_imgs.extend(imgs)
+            if not line_wo:
+                continue
+            line = line_wo
+
+        optm = _OPTION_RE.match(line)
+        if optm and not in_analysis:
+            raw_line = line
+            embedded = re.findall(r"\[\[IMG:(.+?)\]\]", raw_line)
+            line_clean = re.sub(r"\s*\[\[IMG:.+?\]\]\s*", " ", raw_line).strip()
+            optm = _OPTION_RE.match(line_clean)
+            if not optm:
+                continue
+            letter = optm.group(1).upper()
+            content = optm.group(2).strip()
+            idx = ord(letter) - ord("A")
+            while len(options) <= idx:
+                options.append("")
+            options[idx] = content
+            option_imgs[idx].extend(embedded)
+            current_option_idx = None
+            continue
+
+        am = _ANSWER_LINE_RE.match(line)
+        if am:
+            val = am.group(1).strip()
+            correct_letters = _parse_correct_letters(val)
+            after_answer = True
+            current_option_idx = None
+            if not correct_letters:
+                answer_text = val
+            continue
+
+        sam = _STANDALONE_ANSWER_LETTERS_RE.match(line)
+        if sam and not in_analysis and not correct_letters and any(options):
+            letters = _parse_correct_letters(sam.group(1))
+            if letters:
+                correct_letters = letters
+                after_answer = True
+                current_option_idx = None
+                continue
+
+        anm = _ANALYSIS_LINE_RE.match(line)
+        if anm:
+            in_analysis = True
+            after_answer = False
+            rest = (anm.group(1) or "").strip()
+            if rest:
+                analysis_lines.append(rest)
+            continue
+
+        if in_analysis:
+            analysis_lines.append(line.strip())
+        else:
+            if not _OPTION_RE.match(line) and not _ANSWER_LINE_RE.match(line):
+                title += "\n" + line.strip()
+                current_option_idx = None
+
+    analysis = "\n".join([x for x in analysis_lines if x]).strip() or None
+
+    if options:
+        qtype = 2 if len(correct_letters) >= 2 else 1
+    else:
+        if correct_letters in (["A"], ["B"]) and (answer_text is None):
+            qtype = 3
+        else:
+            qtype = 4
+
+    title_clean, title_imgs = _strip_img_markers(title.strip())
+    stem_imgs = title_imgs + stem_imgs
+
+    return ParsedQuestion(
+        qtype=qtype,
+        title=title_clean,
+        options=(options + [""] * 6)[:6],
+        correct_letters=correct_letters,
+        answer_text=answer_text,
+        analysis=analysis,
+        stem_image_links=stem_imgs,
+        option_image_links=option_imgs,
+        answer_image_links=answer_imgs,
+        analysis_image_links=analysis_imgs,
+    )
+
+
 def parse_questions_from_text(text: str) -> List[ParsedQuestion]:
     lines = [x.strip() for x in text.split("\n") if x.strip()]
-    # 先处理“题目X + 【问题Y】”结构：把每个【问题】拆成独立题（简答题）
-    # 如果文档没有【问题】结构，再走普通的“1. / A. / 答案：”解析。
+    # 先处理「题目X / 试题X + 【问题Y】」结构：
+    # - 若该大题下各【问题】均为简答 → 合并为一道简答题（多空、不写材料组列）；
+    # - 若含客观题等 → 每道【问题】单独一行，材料段重复拼入题干（仍不用材料组列）。
+    # 若文档没有【问题】结构，再走普通的「1. / A. / 答案：」解析。
     has_subq = any(_SUB_Q_RE.match(x) for x in lines)
     if has_subq:
         parsed: List[ParsedQuestion] = []
-        current_big: Optional[Tuple[str, str]] = None  # ("题目1", "题目说明行")
+        current_big: Optional[Tuple[str, str]] = None
+        pending_big_lines: List[str] = []
         current_q_title: Optional[str] = None
         current_body: List[str] = []
+        block_questions: List[ParsedQuestion] = []
 
         def flush_subq() -> None:
             nonlocal current_q_title, current_body
             if not current_q_title:
                 return
-            answer_text: Optional[str] = None
-            analysis_lines_sub: List[str] = []
-            body_remain: List[str] = []
-            answer_imgs_sq: List[str] = []
-            analysis_imgs_sq: List[str] = []
-            stem_pre_imgs: List[str] = []
-            in_an = False
-            after_ans = False
-
-            for line in current_body:
-                line_work = line
-                if "[[IMG:" in line:
-                    imgs = re.findall(r"\[\[IMG:(.+?)\]\]", line)
-                    line_work = re.sub(r"\s*\[\[IMG:.+?\]\]\s*", " ", line).strip()
-                    if in_an:
-                        analysis_imgs_sq.extend(imgs)
-                    elif after_ans:
-                        answer_imgs_sq.extend(imgs)
-                    else:
-                        stem_pre_imgs.extend(imgs)
-                    if not line_work:
-                        continue
-
-                am = _ANSWER_LINE_RE.match(line_work)
-                if am:
-                    after_ans = True
-                    answer_text = am.group(1).strip()
-                    continue
-                anm = _ANALYSIS_LINE_RE.match(line_work)
-                if anm:
-                    in_an = True
-                    after_ans = False
-                    rest = (anm.group(1) or "").strip()
-                    if rest:
-                        analysis_lines_sub.append(rest)
-                    continue
-                if in_an:
-                    analysis_lines_sub.append(line_work)
-                    continue
-                if after_ans:
-                    answer_text = (answer_text or "") + ("\n" + line_work if answer_text else line_work)
-                    continue
-                body_remain.append(line_work)
-
-            body = "\n".join(body_remain).strip()
-            title_full = current_q_title
-            if body:
-                title_full = title_full + "\n" + body
-            analysis_sub = "\n".join([x for x in analysis_lines_sub if x]).strip() or None
-            title_full, stem_imgs_sq = _strip_img_markers(title_full.strip())
-            stem_imgs_sq = stem_pre_imgs + stem_imgs_sq
-            parsed.append(
-                ParsedQuestion(
-                    qtype=4,
-                    title=title_full,
-                    options=[""] * 6,
-                    correct_letters=[],
-                    answer_text=answer_text,
-                    analysis=analysis_sub,
-                    stem_image_links=stem_imgs_sq,
-                    option_image_links=[[] for _ in range(6)],
-                    answer_image_links=answer_imgs_sq,
-                    analysis_image_links=analysis_imgs_sq,
-                )
-            )
+            block_questions.append(_parse_question_from_parts(current_q_title, current_body))
             current_q_title = None
             current_body = []
+
+        def finalize_block() -> None:
+            nonlocal block_questions, pending_big_lines
+            if not block_questions:
+                return
+            shared_plain, shared_imgs = _compose_shared_stem_for_group(current_big, pending_big_lines)
+            if all(s.qtype == 4 for s in block_questions):
+                parsed.append(_merge_saqs_into_multi_slot(block_questions, shared_plain, shared_imgs))
+            else:
+                prefix = (shared_plain.strip() + "\n\n") if shared_plain.strip() else ""
+                for s in block_questions:
+                    tcomb = prefix + s.title
+                    tclean, timgs = _strip_img_markers(tcomb)
+                    s.title = tclean
+                    s.stem_image_links = (shared_imgs or []) + (s.stem_image_links or []) + timgs
+                    s.stem_group_code = None
+                    s.shared_stem_content = None
+                    s.shared_stem_image_links = None
+                    parsed.append(s)
+            block_questions.clear()
+            pending_big_lines.clear()
 
         for line in lines:
             es = _SHITI_RE.match(line)
             if es:
                 flush_subq()
+                finalize_block()
                 current_big = (f"试题{es.group(1)}", "")
                 continue
 
             bm = _BIG_Q_RE.match(line)
             if bm:
                 flush_subq()
+                finalize_block()
                 current_big = (f"题目{bm.group(1)}", bm.group(2).strip())
                 continue
 
             sm = _SUB_Q_RE.match(line)
             if sm:
                 flush_subq()
-                prefix = ""
-                if current_big:
-                    big_no, big_title = current_big
-                    if big_title:
-                        prefix = f"{big_no}：{big_title}\n"
-                    else:
-                        prefix = f"{big_no}\n"
                 rest = (sm.group(2) or "").strip()
-                current_q_title = f"{prefix}问题{sm.group(1)}".strip()
+                current_q_title = f"问题{sm.group(1)}".strip()
                 if rest:
                     current_q_title = f"{current_q_title}：{rest}"
                 continue
 
             if current_q_title:
                 current_body.append(line)
+                continue
+
+            if current_big is not None:
+                pending_big_lines.append(line)
 
         flush_subq()
+        finalize_block()
         return parsed
 
     blocks = _split_into_question_blocks(lines)
@@ -537,126 +698,8 @@ def parse_questions_from_text(text: str) -> List[ParsedQuestion]:
                             title = f"问题{sm.group(1)}" + (f"：{rest}" if rest else "")
         if not title:
             continue
-        options: List[str] = []
-        correct_letters: List[str] = []
-        answer_text: Optional[str] = None
-        analysis_lines: List[str] = []
-        stem_imgs: List[str] = []
-        option_imgs: List[List[str]] = [[] for _ in range(6)]
-        answer_imgs: List[str] = []
-        analysis_imgs: List[str] = []
-
-        in_analysis = False
-        after_answer = False
-        current_option_idx: Optional[int] = None
-
-        for line in b[1:]:
-            # 图片标记：按阶段绑定到题干 / 选项 / 答案区 / 解析区
-            if "[[IMG:" in line:
-                imgs = re.findall(r"\[\[IMG:(.+?)\]\]", line)
-                # 图片标记可能和文本在同一行：先把标记去掉再继续解析文本
-                line_wo = re.sub(r"\s*\[\[IMG:.+?\]\]\s*", " ", line).strip()
-                if in_analysis:
-                    analysis_imgs.extend(imgs)
-                elif after_answer:
-                    answer_imgs.extend(imgs)
-                elif current_option_idx is not None:
-                    option_imgs[current_option_idx].extend(imgs)
-                else:
-                    stem_imgs.extend(imgs)
-                if not line_wo:
-                    continue
-                line = line_wo
-
-            optm = _OPTION_RE.match(line)
-            if optm and not in_analysis:
-                raw_line = line
-                embedded = re.findall(r"\[\[IMG:(.+?)\]\]", raw_line)
-                line_clean = re.sub(r"\s*\[\[IMG:.+?\]\]\s*", " ", raw_line).strip()
-                optm = _OPTION_RE.match(line_clean)
-                if not optm:
-                    continue
-                letter = optm.group(1).upper()
-                content = optm.group(2).strip()
-                idx = ord(letter) - ord("A")
-                while len(options) <= idx:
-                    options.append("")
-                options[idx] = content
-                option_imgs[idx].extend(embedded)
-                current_option_idx = None
-                continue
-
-            am = _ANSWER_LINE_RE.match(line)
-            if am:
-                val = am.group(1).strip()
-                correct_letters = _parse_correct_letters(val)
-                after_answer = True
-                current_option_idx = None
-                if not correct_letters:
-                    answer_text = val
-                continue
-
-            sam = _STANDALONE_ANSWER_LETTERS_RE.match(line)
-            if (
-                sam
-                and not in_analysis
-                and not correct_letters
-                and any(options)
-            ):
-                letters = _parse_correct_letters(sam.group(1))
-                if letters:
-                    correct_letters = letters
-                    after_answer = True
-                    current_option_idx = None
-                    continue
-
-            anm = _ANALYSIS_LINE_RE.match(line)
-            if anm:
-                in_analysis = True
-                after_answer = False
-                rest = (anm.group(1) or "").strip()
-                if rest:
-                    analysis_lines.append(rest)
-                continue
-
-            if in_analysis:
-                analysis_lines.append(line.strip())
-            else:
-                # 有些题干会换行续写
-                if not _OPTION_RE.match(line) and not _ANSWER_LINE_RE.match(line):
-                    # 题干追加（避免把“（1）…”这类当成新题）
-                    title += "\n" + line.strip()
-                    current_option_idx = None
-
-        analysis = "\n".join([x for x in analysis_lines if x]).strip() or None
-
-        # 推断题型
-        if options:
-            qtype = 2 if len(correct_letters) >= 2 else 1
-        else:
-            # 没有选项时，优先当简答；但如果答案能识别为“对/错”则当判断
-            if correct_letters in (["A"], ["B"]) and (answer_text is None):
-                qtype = 3
-            else:
-                qtype = 4
-
-        title_clean, title_imgs = _strip_img_markers(title.strip())
-        stem_imgs = title_imgs + stem_imgs
-
-        parsed.append(
-            ParsedQuestion(
-                qtype=qtype,
-                title=title_clean,
-                options=(options + [""] * 6)[:6],
-                correct_letters=correct_letters,
-                answer_text=answer_text,
-                analysis=analysis,
-                stem_image_links=stem_imgs,
-                option_image_links=option_imgs,
-                answer_image_links=answer_imgs,
-                analysis_image_links=analysis_imgs,
-            )
-        )
+        pq = _parse_question_from_parts(title, b[1:])
+        parsed.append(pq)
 
     return parsed
 
@@ -678,7 +721,11 @@ def write_questions_to_template(
         # 9:解析
         # 10-15:选项A-F是否正确(1/0)
         # 16:题干图片 17-22:选项A-F图片（这里先留空）
-        # 23-25:材料组编号 / 共用材料题干 / 共用材料题干图片（导入多小问时手填；本脚本默认不写，留空即可）
+        # 23-25:材料组编号 / 共用材料题干 / 共用材料题干图片（同编号多行：首行填共用材料，后端自动建父题并挂子题）
+        ws.cell(row=row_idx, column=23, value=q.stem_group_code or None)
+        ws.cell(row=row_idx, column=24, value=q.shared_stem_content or None)
+        shared_img = q.shared_stem_image_links or []
+        ws.cell(row=row_idx, column=25, value="\n".join(shared_img) or None)
         ws.cell(row=row_idx, column=1, value=q.qtype)
         ws.cell(row=row_idx, column=2, value=q.title)
 
