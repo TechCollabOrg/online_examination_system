@@ -265,6 +265,29 @@
 - 后端：`AutoScoringServiceImpl.java`、`IAutoScoringService.java`、`AnswerController.java`
 - 前端：`views/answer/makeTest.vue`、`api/answer.js`
 
+## 学生考后单题 AI 解析（2026-05）
+
+| 项 | 说明 |
+|----|------|
+| **入口** | 学生（或教师查看答卷）→ **考试记录** → 进入某次考试详情（`record/exam/newk.vue`） |
+| **交互** | 每道题下方 **「AI 解析本题」**；`el-dialog` + `append-to-body` 悬浮层，**不改变原页面** |
+| **接口** | `POST /api/ai/question-review`（body：`examId`、`quId`、可选 `userId`、`subIndex`） |
+| **后端** | `AiQuestionReviewServiceImpl` 拉取答卷明细组 JSON，调用大模型；学生不能解析他人答卷 |
+| **展示** | 弹窗内 Markdown 渲染（`MarkdownView`） |
+| **前置** | 管理员「API 连接配置」已启用；答卷接口返回字段 `quId`（题目 ID） |
+
+### 相关文件
+
+- 后端：`AiController.java`（`POST /api/ai/question-review`）、`AiQuestionReviewServiceImpl.java`、`AiQuestionReviewForm.java`、`ExamRecordDetailVO.java`（`quId`）、`ExerciseRecordServiceImpl.java`、`Constants.studentQuestionReviewSystemMessage`
+- 前端：`views/record/exam/newk.vue`、`components/QuestionAiReviewDialog/index.vue`、`api/ai.js`（`questionAiReview`）
+
+### 验证步骤
+
+1. 管理员在「API 连接配置」保存并启用 AI。
+2. 学生登录 → **考试记录** → 进入某次已交卷考试详情。
+3. 任意题型题目下方点 **「AI 解析本题」**：应弹出悬浮窗（原页面不跳转），Markdown 展示解析。
+4. 学生账号不能对他人答卷（带 `userId` 的教师查看场景由教师身份调用）。
+
 ## 仍待处理
 
 
