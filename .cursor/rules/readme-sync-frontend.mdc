@@ -1,0 +1,27 @@
+---
+description: 修改前端时同步更新 online-exam-system-frontend/README.md
+globs: online-exam-system-frontend/**
+alwaysApply: false
+---
+
+# 前端 README 同步规则（必须遵守）
+
+当你修改 `online-exam-system-frontend/` 下任何会影响**使用方式**的代码或配置时，必须同步更新同目录的 **`README.md`**。
+
+## 必须更新 README 的情况
+
+- 修改 `vue.config.js`（端口、host、proxy、open）
+- 新增/删除/改名页面路由（`src/router/index.js`）或重要菜单入口
+- 修改 `package.json` 脚本（dev、build、electron 等）
+- 变更环境变量模板（`.env.example`、`.env.electron.example`）或 Electron 打包流程
+- 修改学生端全屏、代理、WebSocket 连接方式
+
+## 更新原则
+
+- 用可复制命令和明确 URL/端口
+- 与根目录 `README.md` 不重复堆砌业务说明；业务细节放根 README，本 README 侧重**如何启动、配置、排错、路由索引与打包**
+- 文末「最后更新」日期改为当天（`YYYY-MM-DD`）
+
+## 同时涉及前后端时
+
+若改动也影响后端或全站说明，一并更新根 `README.md` 与 `online-exam-system-backend/README.md`（见 `readme-sync-backend.mdc`）。
