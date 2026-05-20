@@ -257,12 +257,25 @@
 | **教师手动阅卷** | 新增 `autoScoringExamSync`，`POST /api/answers/ai-score` 同步评完再返回 |
 | **交卷自动阅卷** | 保留 `autoScoringExam` 异步，不影响交卷后定时任务 |
 | **配置校验** | 同步阅卷前检查管理员「API 连接配置」是否启用 |
-| **前端** | 去掉轮询；成功后 `getUserAnswerDetail()` 并将 `aiScore` 填入 `correctScore`；请求超时 180s |
+| **前端** | 去掉轮询；成功后 `getUserAnswerDetail()` 并将 `aiScore` 填入 `correctScore`；请求超时 600s（题多时每题单独调模型） |
 | **分数框** | `@wheel.native.prevent` + 隐藏 number 上下箭头 |
+
+### AI 阅卷只评了部分题（2026-05，feature/ai-integration）
+
+| 现象 | 原因 |
+|------|------|
+| 点「AI 阅卷」后只有前两题有分数 | 旧版一次请求评多题，模型常只返回 2 条「评分结果」；或 SQL 只查 `qu_type=4` 且缺作答行，漏掉复合题与其它简答 |
+| 中途失败则前面已评的也丢失 | 整卷在一个事务里，某一题异常会全部回滚 |
+
+| 项 | 处理 |
+|----|------|
+| **题目范围** | `AiGradingQuestionLoader` 与教师 `getDetail` 一致：试卷上全部简答题 + 含简答子题的复合题，缺作答行自动补录 |
+| **逐题阅卷** | 每题单独调模型、单独事务提交；单题失败不影响其它题 |
+| **同步接口** | `POST /api/answers/ai-score` 使用 `autoScoringExamSync`，全部题评完再返回 |
 
 ### 相关文件
 
-- 后端：`AutoScoringServiceImpl.java`、`IAutoScoringService.java`、`AnswerController.java`
+- 后端：`AutoScoringServiceImpl.java`、`AiGradingQuestionLoader.java`、`IAutoScoringService.java`、`AnswerController.java`
 - 前端：`views/answer/makeTest.vue`、`api/answer.js`
 
 ## 学生考后单题 AI 解析（2026-05）
