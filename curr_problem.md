@@ -278,6 +278,38 @@
 - 后端：`AutoScoringServiceImpl.java`、`AiGradingQuestionLoader.java`、`IAutoScoringService.java`、`AnswerController.java`
 - 前端：`views/answer/makeTest.vue`、`api/answer.js`
 
+## AI 分功能 API 配置（2026-05）
+
+| 项 | 说明 |
+|----|------|
+| **需求** | AI 阅卷、AI 助手、成绩简报、考后解析等可使用**不同 API/模型**；界面不杂乱 |
+| **入口** | 管理员侧栏 → **API 连接配置** |
+| **界面** | `el-tabs`：**默认连接**（必填兜底）+ 四个功能 Tab；非默认 Tab 仅一个开关「沿用默认 / 单独配置」，沿用时不展开表单 |
+| **默认连接** | 表 `t_ai_platform_config`（id=1）；未单独配置或勾选「沿用默认」的功能均用此处 |
+| **分功能表** | `t_ai_feature_config`，编码见下表 |
+
+| 功能 Tab | feature_code | 后端解析 |
+|----------|--------------|----------|
+| AI 阅卷 | `grading` | `AIChatRouter.getGradingResponse` → `resolveForFeature(GRADING)` |
+| AI 助手 | `assistant` | `getAssistantChatResponse` → `ASSISTANT` |
+| 成绩简报 | `briefing` | `getBriefingResponse` → `BRIEFING` |
+| 考后解析 | `question_review` | `resolveForFeature(QUESTION_REVIEW)`（考后解析服务） |
+
+| **SQL（必做）** | `online-exam-system-backend/sql/alter_t_ai_feature_config.sql` |
+| **接口** | `GET /api/ai/config/overview` 总览；`PUT /api/ai/config` 默认；`PUT /api/ai/config/features/{code}` 分功能；`GET /api/ai/config/status?feature=assistant` 各端校验 |
+
+### 相关文件
+
+- 后端：`AiPlatformConfigServiceImpl.java`、`AiFeatureCode.java`、`AiFeatureConfig.java`、`AiConfigController.java`、`AIChatRouter.java`、`sql/alter_t_ai_feature_config.sql`
+- 前端：`views/ai-config/index.vue`、`components/AiFeatureConfigPanel/index.vue`、`api/aiConfig.js`
+
+### 验证步骤
+
+1. MySQL 执行 `alter_t_ai_feature_config.sql`，重启后端。
+2. 管理员登录 → **API 连接配置** → **默认连接** 填 URL/密钥/模型并启用、保存。
+3. 打开 **AI 阅卷** Tab：可保持「沿用默认」，或关闭后填另一套 API 并保存。
+4. 教师阅卷页点「AI 阅卷」、学生用 AI 助手、教师生成成绩简报：应分别走对应功能配置（未单独配置则用默认）。
+
 ## 学生考后单题 AI 解析（2026-05）
 
 | 项 | 说明 |
@@ -287,7 +319,7 @@
 | **接口** | `POST /api/ai/question-review`（body：`examId`、`quId`、可选 `userId`、`subIndex`） |
 | **后端** | `AiQuestionReviewServiceImpl` 拉取答卷明细组 JSON，调用大模型；学生不能解析他人答卷 |
 | **展示** | 弹窗内 Markdown 渲染（`MarkdownView`） |
-| **前置** | 管理员「API 连接配置」已启用；答卷接口返回字段 `quId`（题目 ID） |
+| **前置** | 管理员「API 连接配置」中默认或 **考后解析**（`question_review`）已启用；答卷接口返回 `quId` |
 
 ### 相关文件
 
