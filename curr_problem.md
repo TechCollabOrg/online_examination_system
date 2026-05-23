@@ -108,9 +108,13 @@
 
 | **界面** | 多轮气泡对话；`Enter` 发送、`Shift+Enter` 换行；AI 回复 **Markdown 渲染**（`marked` + `DOMPurify`） |
 
-| **RAG 知识库** | `backend/src/main/resources/ai-knowledge/*.md`（系统概览、各角色操作说明） |
+| **RAG 知识库** | 管理员 **「AI 知识库」**（`/ai-knowledge`）增删改；存表 `t_ai_knowledge_doc`；首次空库启动或点「导入内置」可写入 `resources/ai-knowledge/*.md` |
 
-| **检索方式** | 启动时加载 Markdown 切片，按关键词匹配 top 片段；**不连接题库库表** |
+| **检索方式** | 从数据库加载已启用文档并切片，按关键词匹配 top 片段；**不连接题库库表**；增删改后自动刷新索引 |
+
+| **SQL** | `online-exam-system-backend/sql/create_t_ai_knowledge_doc.sql` |
+
+| **接口** | `GET/POST/PUT/DELETE /api/ai/knowledge`；`POST .../import-builtin`（仅管理员）；增删改后服务端自动刷新索引 |
 
 | **多轮** | `POST /api/ai/chat` 支持 `history`；专用 `buildAssistantSystemMessage` |
 
@@ -143,6 +147,8 @@
 |------|------|----------|------|
 
 | **API 连接配置** | 管理员侧边栏 | `AiConfigController`、`AIChatRouter`、`LlmChatExecutor` | `views/ai-config/index.vue` |
+
+| **AI 知识库** | 管理员侧边栏 | `AiKnowledgeController`、`AiKnowledgeRagServiceImpl`（DB 加载） | `views/ai-knowledge/index.vue` |
 
 | **AI 助手** | AI 对话页 | `AiChatServiceImpl` + `AiKnowledgeRagService` + `POST /api/ai/chat` | `ai-assistant/index.vue`、`MarkdownView`（未配置时提示；对话 **sessionStorage** 暂存） |
 
@@ -332,6 +338,69 @@
 2. 学生登录 → **考试记录** → 进入某次已交卷考试详情。
 3. 任意题型题目下方点 **「AI 解析本题」**：应弹出悬浮窗（原页面不跳转），Markdown 展示解析。
 4. 学生账号不能对他人答卷（带 `userId` 的教师查看场景由教师身份调用）。
+
+### 需求与分支现状（2026-05-23）
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| 文档写了「AI 解析本题」，页面上找不到 | 考后解析提交在 **后端 `main`（`02f3a51`）**、**前端 `master`（`e4d4b15`）**，曾未合入 `feature/ai-integration` | 将主分支同步进 AI 分支（见下文「分支同步」）；同步后按验证步骤自测 |
+| 误以为密码错导致 `start-all` 失败 | 堆栈里是 MyBatis，根因也可能是 **缺表** | 看后端弹窗**最底部** `Caused by`：`Access denied` → 查 `env.local` 的 `MYSQL_PASSWORD`；`Table ... doesn't exist` → 执行对应 `sql/*.sql` |
+
+## AI 知识库管理员维护（2026-05-23）
+
+### 需求背景
+
+| 需求 | 说明 |
+|------|------|
+| 不要写死 RAG | 原先把说明放在 `classpath:ai-knowledge/*.md`，改文案要重新打包后端 |
+| 管理员可维护 | 侧边栏 **「AI 知识库」**（`/ai-knowledge`）增删改 Markdown，供 **AI 助手** 检索 |
+| 安全边界 | 知识库只放操作说明，**禁止**写入题库、标准答案、成绩等敏感内容（检索片段也会做关键词过滤） |
+| 新增要方便 | 弹窗内支持 **选择本地 `.md/.txt` 导入**（浏览器读文件，UTF-8，≤2MB），不必手贴长文 |
+| 不要多余按钮 | 「刷新索引」已去掉：保存/删除/导入后服务端 **自动** `reloadIndex()` |
+
+### 技术实现要点
+
+| 项 | 说明 |
+|----|------|
+| **表** | `t_ai_knowledge_doc`，脚本 `sql/create_t_ai_knowledge_doc.sql`（**升级必跑**，否则后端启动失败） |
+| **RAG 加载** | `AiKnowledgeRagServiceImpl` 从库读 `enabled=1` 文档，按 `##` 分段 + 关键词匹配 |
+| **首次数据** | 表为空时启动自动导入内置 md；管理员也可点「导入内置文档」（**仅表为空时**有效，已有数据会提示无需重复导入） |
+| **接口** | `GET/POST/PUT/DELETE /api/ai/knowledge`、`POST .../import-builtin`（仅 `role_admin`） |
+
+### 遇见的问题与解决
+
+| 现象 | 类型 | 原因 | 解决 |
+|------|------|------|------|
+| `start-all.bat` 后端 180s 超时 | 技术 | 缺表 `t_ai_knowledge_doc`，`@PostConstruct` 初始化失败 | 执行 `create_t_ai_knowledge_doc.sql` 后重启 |
+| 以为 MySQL 密码不对 | 需求/排错 | `Access denied` 与 `Table doesn't exist` 堆栈相似，都表现为 8080 起不来 | 以日志 **最内层 Caused by** 为准；密码正确仍失败时先查是否缺 SQL |
+| 「导入内置文档」点不了 | 需求 | 设计为 **仅空库** 一次性种子；首次启动往往已自动导入 | 日常用「新增文档」或「选择文件导入」；要重置需删光文档后再导入 |
+| 找不到「AI 解析本题」 | 需求/分支 | 考后解析在主分支，AI 开发分支未合并 | 见「分支同步」 |
+
+### 相关文件
+
+- 后端：`AiKnowledgeController`、`AiKnowledgeDocServiceImpl`、`AiKnowledgeRagServiceImpl`、`sql/create_t_ai_knowledge_doc.sql`
+- 前端：`views/ai-knowledge/index.vue`、`api/aiKnowledge.js`、路由 `/ai-knowledge`
+
+## 一键启动与环境（2026-05-23）
+
+| 项 | 说明 |
+|----|------|
+| **入口** | 仓库根目录 `start-all.bat` → 调用 `start-all.ps1` |
+| **后端窗口** | 标题 `Online Exam Backend :8080`，报错请看此窗口最底部 |
+| **依赖** | MySQL（`db_exam`）、Redis（`6379`）；`online-exam-system-backend/env.local` 必填（从 `env.local.example` 复制） |
+| **新功能 SQL** | 除 `alter_t_ai_platform_config.sql`、`alter_t_ai_feature_config.sql` 外，知识库需 **`create_t_ai_knowledge_doc.sql`** |
+
+## 分支同步（2026-05-23）
+
+将主分支能力合入 AI 开发分支，避免「文档有、代码无」：
+
+| 仓库 | 主分支 | AI 分支 | 主分支独有（需合入） |
+|------|--------|---------|----------------------|
+| online-exam-system-backend | `main` | `feature/ai-integration` | 考后单题解析 `02f3a51` 等 |
+| online-exam-system-frontend | `master` | `feature/ai-integration` | 考试记录「AI 解析本题」`e4d4b15` 等 |
+| online_examination_system | `main` | `main` | 子模块指针 + `curr_problem.md` |
+
+合并后：在 AI 分支上执行上述 SQL → `.\start-all.bat` → 学生进 **考试记录** 详情验证「AI 解析本题」。
 
 ## 仍待处理
 
