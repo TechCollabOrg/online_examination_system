@@ -1,3 +1,7 @@
+# LiveKit 开发环境（监考音视频）
+# 用法：docker compose -f docker-compose.livekit.yml up -d
+# 默认 ws://127.0.0.1:7880，密钥 devkey/secret（与 application-dev.yml livekit.* 一致）
+
 services:
   livekit:
     image: livekit/livekit-server:latest
