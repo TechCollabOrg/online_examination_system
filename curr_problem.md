@@ -390,17 +390,39 @@
 | **依赖** | MySQL（`db_exam`）、Redis（`6379`）；`online-exam-system-backend/env.local` 必填（从 `env.local.example` 复制） |
 | **新功能 SQL** | 除 `alter_t_ai_platform_config.sql`、`alter_t_ai_feature_config.sql` 外，知识库需 **`create_t_ai_knowledge_doc.sql`** |
 
-## 分支同步（2026-05-23）
+## 分支同步与远端进度（2026-05-23 更新）
 
-将主分支能力合入 AI 开发分支，避免「文档有、代码无」：
+### 已完成的本地同步
 
-| 仓库 | 主分支 | AI 分支 | 主分支独有（需合入） |
-|------|--------|---------|----------------------|
-| online-exam-system-backend | `main` | `feature/ai-integration` | 考后单题解析 `02f3a51` 等 |
-| online-exam-system-frontend | `master` | `feature/ai-integration` | 考试记录「AI 解析本题」`e4d4b15` 等 |
-| online_examination_system | `main` | `main` | 子模块指针 + `curr_problem.md` |
+| 仓库 | 开发分支 | 已合入主分支能力 | 最新提交（feature/ai-integration） |
+|------|----------|------------------|----------------------------------|
+| online-exam-system-backend | `feature/ai-integration` | `main`（含考后单题解析 `02f3a51` 等） | `8380912` merge + `60f17b6` 知识库 |
+| online-exam-system-frontend | `feature/ai-integration` | `master`（含「AI 解析本题」`e4d4b15` 等） | `f880952` merge + `2ab2cb0` 知识库页 |
+| online_examination_system | `main` | 子模块指针 + `curr_problem.md` + 启动脚本 | `af49434` |
 
-合并后：在 AI 分支上执行上述 SQL → `.\start-all.bat` → 学生进 **考试记录** 详情验证「AI 解析本题」。
+上述提交已 **push 到 GitHub**（`TechCollabOrg/*` 远端 `feature/ai-integration` / 外层 `main`）。
+
+### 当前功能清单（AI 分支可用）
+
+| 功能 | 入口 | 部署注意 |
+|------|------|----------|
+| API 连接配置 + 分功能 API | 管理员「API 连接配置」 | `alter_t_ai_platform_config.sql`、`alter_t_ai_feature_config.sql` |
+| AI 知识库（RAG） | 管理员「AI 知识库」 | **`create_t_ai_knowledge_doc.sql`（必跑）** |
+| AI 助手 | 侧栏「AI 助手」 | 默认或 `assistant` 功能 API 已启用 |
+| AI 阅卷 | 阅卷页「AI 阅卷」 | 同步接口，逐题提交 |
+| 成绩 AI 简报 | 成绩详情「生成简报」 | `briefing` 或默认 API |
+| 考后单题 AI 解析 | 考试记录详情「AI 解析本题」 | `question_review` 或默认 API |
+
+### 本地验证步骤
+
+1. MySQL 执行上述 SQL（尤其 `create_t_ai_knowledge_doc.sql`）
+2. 配置 `online-exam-system-backend/env.local`（MySQL 密码、可选 LLM 密钥）
+3. 仓库根目录 `.\start-all.bat`
+4. 管理员启用 API → 学生进 **考试记录** 详情点 **「AI 解析本题」**
+
+### 主分支合入（尚未做）
+
+`feature/ai-integration` 能力尚未合并回后端 `main`、前端 `master`；需要上线主分支时再提 PR 或本地 merge。
 
 ## 仍待处理
 
