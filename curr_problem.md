@@ -412,13 +412,26 @@
 | AI 阅卷 | 阅卷页「AI 阅卷」 | 同步接口，逐题提交 |
 | 成绩 AI 简报 | 成绩详情「生成简报」 | `briefing` 或默认 API |
 | 考后单题 AI 解析 | 考试记录详情「AI 解析本题」 | `question_review` 或默认 API |
+| **摄像头监考（MVP）** | 教师考试管理「监考」；学生答题页右下角摄像头 | **`alter_t_exam_proctor.sql`** + 根目录 `docker compose -f docker-compose.livekit.yml up -d` |
+
+### 摄像头监考（2026-05 新增，MVP）
+
+| 项 | 说明 |
+|----|------|
+| **技术栈** | LiveKit 音视频房间 + 浏览器 MediaPipe 本地人脸检测 + 后端事件/暂离/WebSocket 告警 |
+| **教师** | 创建考试时勾选「启用摄像头监考」→ 考试管理列表 **「监考」** → `/exam-proctor?examId=` |
+| **学生** | 进入答题页后右下角摄像头预览；离屏/无人/多人会上报；可配置「暂离」 |
+| **LiveKit** | 默认 `ws://127.0.0.1:7880`，开发密钥 `devkey`/`secret`；见根目录 `docker-compose.livekit.yml` |
+| **录像回看** | 架构预留 LiveKit Egress，**本 MVP 未实现** |
+| **详细配置文档** | 根目录 [`docs/PROCTOR_SETUP.md`](../docs/PROCTOR_SETUP.md) |
 
 ### 本地验证步骤
 
-1. MySQL 执行上述 SQL（尤其 `create_t_ai_knowledge_doc.sql`）
+1. MySQL 执行上述 SQL（尤其 `create_t_ai_knowledge_doc.sql`、**启用监考时** `alter_t_exam_proctor.sql`）
 2. 配置 `online-exam-system-backend/env.local`（MySQL 密码、可选 LLM 密钥）
-3. 仓库根目录 `.\start-all.bat`
-4. 管理员启用 API → 学生进 **考试记录** 详情点 **「AI 解析本题」**
+3. （监考）`docker compose -f docker-compose.livekit.yml up -d`
+4. 仓库根目录 `.\start-all.bat`
+5. 管理员启用 API → 学生进 **考试记录** 详情点 **「AI 解析本题」**；教师创建启用监考的考试并点 **「监考」** 验证
 
 ### 主分支合入（尚未做）
 
