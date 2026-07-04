@@ -51,7 +51,7 @@
 | 功能   | 说明                       |
 | ---- | ------------------------ |
 | 试卷中心 | 查看自己班级发布的所有考试，点击参加       |
-| 参加考试 | 浏览器为网页全屏；学生端 `.exe` 为系统窗口全屏（主进程控制）。交卷后退出全屏。切屏会被记录；若教师开启监考，右下角会出现摄像头预览并连接 LiveKit |
+| 参加考试 | 浏览器为网页全屏；学生端 `.exe` 为系统窗口全屏（主进程控制）。交卷后退出全屏。切屏会被记录 |
 | 刷题中心 | 练习题库中的题目，随时可做不计入成绩       |
 | 考试记录 | 交卷后即可查看（含「待批改」状态）；详情页展示每题得分/满分；每题可点 **「AI 解析本题」** 弹出悬浮窗讲解错因（需管理员已启用 API 连接配置） |
 | 刷题记录 | 查看自己的刷题历史                |
@@ -70,7 +70,8 @@
 | 题库管理 | 新建、编辑、删除题目；**知识树**：在题库列表点「知识树」，由 AI 根据题目归纳知识点层级（需管理员已配置 AI） |
 | 题目分类 | 给题目打标签分类，方便组卷         |
 | 试题仓库 | 管理题目集合，按类别组织；**试题管理**支持按知识树节点筛选题目          |
-| 考试管理 | 创建考试（设置时间、题目、分数、通过分线）；发布范围可选**按班级**或**按学生**（按学生时可跨班级筛选勾选）；可开启**摄像头监考**与暂离规则；「查看详情」可预览试卷并查看各班级**缺考名单**；启用监考的考试在列表中可点 **「监考」** 进入实时监考页 |
+| 考试管理 | 创建考试（设置时间、题目、分数、通过分线）；发布范围可选**按班级**或**按学生**（按学生时可跨班级筛选勾选）；「查看详情」可预览试卷并查看各班级**缺考名单** |
+| AI 智能导题 | 试题管理页上传 `.docx`/`.md`，由 AI 转为 JSON 后自动入库（需管理员已配置「AI 试题导入」API） |
 | 阅卷评分 | 批改简答题；阅卷管理可查看「待批阅」与「缺考名单」 |
 | 班级管理 | 查看班级学生名单，分配考试         |
 | 成绩统计 | 查看班级整体成绩；在「用户成绩」详情页饼图按**及格线**五档分段：**E** 为不及格及以下，**A/B/C/D** 为及格及以上四档（分数越高档越高）；及格分在卡片标题旁；饼图标题在图上方、**图例在图下方**，绿系为及格档、红色为不及格档 |
@@ -141,8 +142,8 @@
 | 考试管理 | 对所有考试有完整管理权限      |
 | 统计报表 | 全站数据概览            |
 | 证书管理 | 配置和颁发电子证书         |
-| API 连接配置 | 先配「默认连接」；AI 阅卷、助手、成绩简报、考后解析可各自单独指定 API，也可全部沿用默认 |
-| AI 知识库 | 维护 AI 助手 RAG 文档（Markdown）；首次部署执行 `sql/create_t_ai_knowledge_doc.sql`；入口侧边栏 **「AI 知识库」**（`/ai-knowledge`）；新增/编辑时可 **选择本地 .md/.txt 导入** |
+| API 连接配置 | 侧边栏 **「API 连接配置」**（`/ai-api-config`）：先配「默认连接」，再按需为 AI 阅卷 / 助手 / 成绩简报 / 考后解析 / 试题导入 单独指定 API |
+| AI 知识库 | 侧边栏 **「AI 知识库」**（`/ai-knowledge`）：维护助手 RAG 文档（Markdown）；新增/编辑可 **选择本地 .md/.txt 导入**；首次部署见下方「AI 功能配置」 |
 
 
 ---
@@ -169,7 +170,18 @@
 CREATE DATABASE db_exam DEFAULT CHARACTER SET utf8mb4;
 ```
 
-然后在 MySQL 客户端（如 Navicat 或命令行）中运行 `online-exam-system-backend/sql/` 目录下的 `db_exam.sql`（或你实际使用的初始化脚本）。
+然后在 MySQL 客户端（如 Navicat 或命令行）中运行 `online-exam-system-backend/sql/db_exam.sql`（新装库）。若从旧库升级，见下方「已有数据库升级」及 `sql/legacy/` 下脚本。
+
+**从 Git 拉取最新 main（含子模块）**：
+
+```bash
+git clone --recurse-submodules https://github.com/TechCollabOrg/online_examination_system.git
+# 或已有仓库：
+git checkout main && git pull origin main
+git submodule update --init --recursive
+```
+
+后端、前端分别在各自子目录的 `main` / `master` 分支开发；外层仓库通过子模块指针锁定版本。
 
 ### 第三步：启动后端
 
@@ -582,6 +594,9 @@ online_examination_system/
 | 证书  | `/api/certificate` | 证书颁发与查询        |
 | 文件  | `/api/file`        | 图片/附件上传        |
 | 日志  | `/api/log`         | 操作日志查询         |
+| AI 配置 | `/api/ai/config`   | 默认 + 分功能 API 连接（管理员） |
+| AI 对话 | `/api/ai`          | 助手对话、考后单题解析      |
+| AI 知识库 | `/api/ai/knowledge` | 助手 RAG 文档 CRUD（管理员） |
 
 
 完整接口文档启动后见：`http://127.0.0.1:8080/doc.html`
@@ -606,11 +621,29 @@ online_examination_system/
 ### AI 辅助功能
 
 
-| 功能      | 当前状态 | 说明                                  |
-| ------- | ---- | ----------------------------------- |
-| AI 辅助评分 | 部分实现 | 超时降级逻辑、「待人工批阅」状态字段需与需求文档 2.5.1 完整对齐 |
-| 智能组卷    | 未实现  | 基于知识点和难度自动推荐题目组合（可先使用题库「知识树」把握考查范围）                    |
-| 学习建议生成  | 未实现  | 根据错题和成绩趋势给学生个性化建议                   |
+| 功能 | 当前状态 | 说明 |
+| ---- | ---- | ---- |
+| AI 主观题阅卷 | 已实现 | 教师阅卷页逐题调用；使用 `grading` 功能配置 |
+| AI 助手 + RAG | 已实现 | 侧边栏「AI 助手」；知识库由管理员在 DB 维护，关键词检索注入 Prompt |
+| 成绩 AI 简报 | 已实现 | 成绩分析页生成；使用 `briefing` 功能配置 |
+| 考后单题解析 | 已实现 | 考试记录详情「AI 解析本题」；使用 `question_review` 功能配置 |
+| AI 智能导题 | 已实现 | 上传 docx/md → AI 转 JSON → 入库；使用 `question_import` 功能配置 |
+| 分功能 API 配置 | 已实现 | 管理员「API 连接配置」Tab：默认 + 五功能可独立指定或沿用默认 |
+| 智能组卷 | 未实现 | 可先使用题库「知识树」把握考查范围 |
+
+
+### AI 功能配置（管理员首次启用）
+
+1. **数据库**（已有库按需执行，新库用 `db_exam.sql` 可跳过）：
+   - `sql/legacy/alter_t_ai_platform_config.sql` — 默认 API 连接表
+   - `sql/legacy/alter_t_ai_feature_config.sql` — 分功能配置表
+   - `sql/legacy/create_t_ai_knowledge_doc.sql` — 助手知识库表  
+   或一次性执行 `sql/legacy/upgrade_legacy_db.sql`（含上述步骤，**勿重复执行**）。
+2. **Web 配置**：管理员登录 → **API 连接配置** → 填写 OpenAI 兼容 `Base URL`、API Key、模型 → **测试连接** → 保存；各功能 Tab 可勾选「沿用默认」或单独填写。
+3. **知识库**（可选）：**AI 知识库** → 新增 Markdown 文档或导入本地 `.md`；内容仅写系统操作说明，勿写入题库答案等敏感信息。
+4. **验证**：教师端试题管理尝试 **AI 导入**；任意角色打开 **AI 助手** 提问「怎么参加考试」。
+
+API Key 仅存数据库，勿提交到 Git；生产环境通过环境变量或管理员页面配置。
 
 
 ### 其他待完善项
@@ -636,50 +669,28 @@ online_examination_system/
 
 **自己选题（组卷信息第一个页签）**：不必先在「随机抽题」里绑定题库 ID；保存时后端会根据已选试题自动写入关联题库。上方可设置各题型**默认分值**（含**复合题**单独一项，与简答题分开统计，支持两位小数）；勾选题目后，在下方「已选题目」列表中点击**设置分值**，可为任意单题单独改分（会显示「已改」标记）。题目列表右侧可点**查看详情**预览题干、选项与小题（复合题含共用材料与各小问）。修改题型默认分时，只会同步尚未单独改过的题目。试卷总分按各题分值相加自动计算。若题目存在材料父子结构，勾选父题会自动联动勾选同组子题，考试中会按试卷顺序连续出现。若提示「所选题目未关联题库」，请在试题管理中给相关题目指定所属题库后再保存。
 
-**已有数据库升级**：若**考试管理**或组卷保存报错缺少 `compound_count` 字段，请在 MySQL 对 `db_exam` 执行一次 `online-exam-system-backend/sql/alter_t_exam_compound_type.sql`（也可用 Navicat 等工具打开该文件执行），然后重启后端。若提示列已存在可忽略。
+**已有数据库升级**：增量脚本在 `online-exam-system-backend/sql/legacy/`（`alter_*.sql`、`upgrade_legacy_db.sql`）。常见报错与对应脚本见根 README 各功能章节及 [后端 README](online-exam-system-backend/README.md)。
 
-## 摄像头监考（LiveKit + 本地人脸检测，AI 分支）
+## 已有数据库升级（速查）
 
-> 首次使用前需执行 SQL、启动 LiveKit，并在创建考试时打开「启用摄像头监考」。
+| 报错 / 场景 | 执行脚本（路径均在 `sql/legacy/`） |
+|-------------|-----------------------------------|
+| 缺邀请码表 | `create_t_invite_code.sql` |
+| 缺 AI 配置表 | `alter_t_ai_platform_config.sql`、`alter_t_ai_feature_config.sql` |
+| 缺 AI 知识库表 | `create_t_ai_knowledge_doc.sql` |
+| 缺 `compound_count` | `alter_t_exam_compound_type.sql` |
+| 缺 `audio` 列 | `alter_t_question_audio.sql` |
+| 缺 `major` / 按学生发考试 | `alter_t_user_major.sql`、`alter_t_exam_user.sql` |
+| 分值小数 / 旧整分数据 | `alter_score_storage_x100.sql` |
+| 一次升级多项 | `upgrade_legacy_db.sql`（执行前备份，勿重复） |
 
-### 1. 数据库
+执行任意脚本后 **重启后端**。
 
-在 MySQL 执行一次：
+## 摄像头监考（已暂停维护）
 
-```text
-online-exam-system-backend/sql/alter_t_exam_proctor.sql
-```
+> **当前 main 分支不含 LiveKit 监考功能**（mod 合并后已移除相关表与页面）。若本地仍有 `docker-compose.livekit.yml` 或旧文档，请勿按此部署。后续若恢复监考，将单独开分支说明。
 
-若提示列已存在，跳过 `ALTER TABLE t_exam` 部分，只执行后面的建表语句即可。
-
-### 2. 启动 LiveKit（开发环境）
-
-在项目根目录（与 `docker-compose.livekit.yml` 同级）：
-
-```powershell
-docker compose -f docker-compose.livekit.yml up -d
-```
-
-默认 WebSocket：`ws://127.0.0.1:7880`，密钥 `devkey` / `secret`（与 `application-dev.yml` 中 `livekit.*` 一致）。未启动 LiveKit 时，学生/教师监考页会提示连接失败。
-
-### 3. 教师怎么用
-
-1. **考试管理 → 创建/编辑考试**：打开「启用摄像头监考」，可按需设置「允许暂离」及单次时长、次数上限。
-2. 考试发布后，在 **考试管理** 列表对启用监考的考试点 **「监考」**，进入 `/exam-proctor?examId=…`。
-3. 左侧选考生可看实时画面；右侧为告警记录；浏览器需保持登录（WebSocket 会推送新告警）。
-
-### 4. 学生怎么用
-
-进入考试答题页后，若本场启用监考，右下角出现摄像头小窗；请**允许浏览器使用摄像头**。系统会在本地做人脸离屏/无人/多人检测并上报；若允许暂离，可点「暂离」并在时限内返回。
-
-### 5. 常见问题
-
-| 现象 | 先检查 |
-|------|--------|
-| 后端启动报 `Table '…t_proctor_event' doesn't exist` | 是否已执行 `alter_t_exam_proctor.sql` |
-| 监考页「连接 LiveKit 失败」 | `docker compose -f docker-compose.livekit.yml ps` 是否为 running；7880 端口是否被占用 |
-| 教师看不到「监考」按钮 | 该考试创建时是否勾选启用监考；列表需刷新 |
-| 学生无摄像头小窗 | 该场 `proctorEnabled` 是否为 1；是否已进入**答题页**（非仅考试说明页） |
+---
 
 **复合题编辑**：小题题干支持富文本与正文内插图；保存时会识别「仅有图片、无文字」的题干为已填写。教师端「试卷详情」会展示共用材料与各小题（客观题标出正确答案）。批改试卷时，含简答小问的复合题会展示共用材料、各小题与考生作答；**AI 阅卷**会一并处理复合题中的简答子题。
 
@@ -695,7 +706,7 @@ docker compose -f docker-compose.livekit.yml up -d
 - 首次使用点 **「生成知识树」**：系统将该题库题目（最多 80 道）摘要发给 AI，归纳 2～4 层知识点树；各节点显示关联题目数量
 - 生成结果保存在题库记录中，下次打开直接展示；可点 **「重新生成」** 覆盖
 - 需管理员在 **API 连接配置** 中启用 AI；题库中需有题目，否则无法生成
-- **已有数据库**请执行一次 `online-exam-system-backend/sql/alter_t_repo_knowledge_tree.sql`
+- **已有数据库**请执行一次 `online-exam-system-backend/sql/legacy/alter_t_repo_knowledge_tree.sql`
 - **按知识点筛选题目**：教师端 **试题管理** → 先选择题库 → 在「知识点」下拉框选择节点（含子节点题目）→ 点查询
 
 ---
@@ -715,4 +726,4 @@ docker compose -f docker-compose.livekit.yml up -d
 
 ---
 
-*最后更新：2026-07-03* · 监考详细配置见 [docs/PROCTOR_SETUP.md](docs/PROCTOR_SETUP.md)
+*最后更新：2026-07-04* · mod 已合并 main；AI 分功能配置 / 知识库 / 智能导题已纳入主分支
